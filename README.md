@@ -1,4 +1,38 @@
-# 一、这个应用到底“有什么用”？
+# 舆情分析系统 (Public Opinion Analysis System)
+
+## 🚀 快速开始
+
+### 方式1: Web可视化界面 (推荐)
+
+提供友好的Web界面，无需编写代码即可进行舆情分析。
+
+```bash
+# 安装依赖
+pip install -r requirements.txt
+
+# 启动Web界面
+./visualization/run_web.sh        # Mac/Linux
+# 或
+visualization\run_web.bat          # Windows
+
+# 访问 http://localhost:8501
+```
+
+📖 详细文档: [WEB_VISUALIZATION.md](WEB_VISUALIZATION.md)
+
+### 方式2: 命令行使用
+
+```bash
+# 生成模拟数据并分析
+python src/main/python/main/app.py --generate --num-records 1000
+
+# 分析已有数据
+python src/main/python/main/app.py --input data/raw --format csv
+```
+
+---
+
+# 一、这个应用到底"有什么用"？
 
 ## 1️⃣ 舆情 / 文本分析在真实世界的用途
 
