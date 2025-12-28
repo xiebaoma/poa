@@ -13,8 +13,10 @@
 
 ### 1.3 软件要求
 - **Java**：JDK 8 或 JDK 11（Spark必需）
-- **Python**：3.8 或 3.9（推荐3.9）
+- **Python**：3.8、3.9、3.11 或 3.12（推荐3.11）
+  - ⚠️ **注意**：Python 3.13 在 Windows 上与 PySpark 存在兼容性问题，建议使用 3.11 或 3.12
 - **Spark**：3.5.0+（通过PySpark自动安装）
+  - ⚠️ **Windows 用户**：请使用 PySpark 3.5.x 版本，避免使用 4.0+ 版本（详见下方说明）
 
 ---
 
@@ -58,6 +60,11 @@ echo $JAVA_HOME
 
 ### 2.2 安装 Python（必需）
 
+⚠️ **重要提示 - Windows 用户**：
+- 如果你在 Windows 上，建议使用 **Python 3.11** 或 **Python 3.12**
+- **避免使用 Python 3.13**，因为它与 PySpark 存在兼容性问题
+- 详见：[PYSPARK_WINDOWS_FIX.md](PYSPARK_WINDOWS_FIX.md)
+
 #### Linux
 ```bash
 # Ubuntu/Debian
@@ -75,8 +82,10 @@ brew install python@3.9
 ```
 
 #### Windows
-1. 从 https://www.python.org/downloads/ 下载 Python 3.9
+**推荐安装 Python 3.11 或 3.12：**
+1. 从 https://www.python.org/downloads/ 下载 Python 3.11 或 3.12
 2. 安装时勾选 "Add Python to PATH"
+3. ⚠️ **避免使用 Python 3.13**（PySpark 兼容性问题）
 
 #### 验证安装
 ```bash
@@ -121,7 +130,9 @@ pip install -r requirements.txt
 ```
 
 #### 依赖包说明
-- **pyspark>=3.5.0**：Spark Python API（会自动下载Spark）
+- **pyspark>=3.5.0,<4.0.0**：Spark Python API（会自动下载Spark）
+  - ⚠️ **Windows 用户注意**：已限制版本为 3.5.x，因为 PySpark 4.x 在 Windows 上存在兼容性问题
+  - 详见：[PYSPARK_WINDOWS_FIX.md](PYSPARK_WINDOWS_FIX.md)
 - **pandas>=2.0.0**：数据处理（数据生成器使用）
 - **numpy>=1.24.0**：数值计算
 - **pyyaml>=6.0**：配置文件解析
@@ -355,6 +366,44 @@ python -m src.main.python.main.app -i data/raw/data.csv
 错误：FileNotFoundError
 解决：确保在项目根目录运行，或使用绝对路径
 ```
+
+### 7.5 Windows 上的 PySpark 兼容性问题 ⚠️
+
+**问题描述**：
+```
+错误：AttributeError: module 'socketserver' has no attribute 'UnixStreamServer'
+或：PySpark 在 Windows 上无法启动
+```
+
+**原因**：
+- PySpark 4.x 在 Windows 上与 Python 3.13 存在兼容性问题
+- `UnixStreamServer` 类在 Windows 上不存在（仅限 Unix/Linux）
+
+**解决方案**：
+
+**方案 1：使用 PySpark 3.5.x（推荐）✓**
+```bash
+pip uninstall pyspark -y
+pip install "pyspark>=3.5.0,<4.0.0"
+```
+
+**方案 2：使用兼容性补丁**
+项目已包含自动兼容性补丁，如果需要使用 PySpark 4.x：
+```bash
+# 运行兼容性检查
+python pyspark_windows_compat.py
+
+# 补丁已自动集成到主程序中
+python src/main/python/main/app.py
+```
+
+**方案 3：降级 Python 版本**
+```bash
+# 卸载 Python 3.13
+# 安装 Python 3.11 或 3.12
+```
+
+**详细说明**：请参阅 [PYSPARK_WINDOWS_FIX.md](PYSPARK_WINDOWS_FIX.md)
 
 ---
 

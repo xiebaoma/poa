@@ -6,9 +6,21 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 from pathlib import Path
 import sys
+import platform
+import os
 
 # 添加项目根目录到路径
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
+
+# Windows Spark 路径修复
+if platform.system() == 'Windows':
+    try:
+        project_root = Path(__file__).parent.parent.parent.parent.parent
+        sys.path.insert(0, str(project_root))
+        from fix_spark_windows import fix_spark_windows_paths
+        fix_spark_windows_paths()
+    except Exception:
+        pass  # 静默失败，不影响主流程
 from utils.config_loader import load_config, get_data_paths
 
 
@@ -23,17 +35,56 @@ class DataLoader:
             spark_session: SparkSession对象，如果为None则自动创建
         """
         if spark_session is None:
-            config = load_config()
-            spark_config = config.get('spark', {})
-            
-            self.spark = SparkSession.builder \
-                .appName(spark_config.get('app_name', 'SentimentAnalysisSystem')) \
-                .master(spark_config.get('master', 'local[*]')) \
-                .config("spark.executor.memory", spark_config.get('executor_memory', '2g')) \
-                .config("spark.driver.memory", spark_config.get('driver_memory', '1g')) \
-                .getOrCreate()
+            try:
+                print("正在初始化 SparkSession...")
+                config = load_config()
+                spark_config = config.get('spark', {})
+                
+                print(f"Spark 配置: master={spark_config.get('master', 'local[*]')}")
+                
+                builder = SparkSession.builder \
+                    .appName(spark_config.get('app_name', 'SentimentAnalysisSystem')) \
+                    .master(spark_config.get('master', 'local[*]'))
+                
+                # 基本配置
+                builder = builder \
+                    .config("spark.executor.memory", "1g") \
+                    .config("spark.driver.memory", "1g") \
+                    .config("spark.sql.shuffle.partitions", "2")
+                
+                # Windows 特定配置 - 禁用 Hadoop
+                if platform.system() == 'Windows':
+                    print("应用 Windows 配置（无 Hadoop）...")
+                    from pathlib import Path
+                    project_root = Path(__file__).parent.parent.parent.parent.parent
+                    
+                    builder = builder \
+                        .config("spark.hadoop.io.native.lib.available", "false") \
+                        .config("spark.sql.warehouse.dir", str(project_root / "spark-warehouse")) \
+                        .config("spark.sql.catalogImplementation", "in-memory")
+                    
+                    print("✓ 已禁用 Hadoop 依赖")
+                
+                print("正在创建 SparkSession...")
+                self.spark = builder.getOrCreate()
+                self.spark.sparkContext.setLogLevel("WARN")
+                print("✓ SparkSession 创建成功")
+            except Exception as e:
+                print(f"\n✗ 创建 SparkSession 失败!")
+                print(f"错误类型: {type(e).__name__}")
+                print(f"错误信息: {e}")
+                print("\n可能的原因:")
+                print("1. Java 未安装或未在 PATH 中")
+                print("   下载: https://adoptium.net/")
+                print("2. JAVA_HOME 环境变量未设置")
+                print(f"   当前 JAVA_HOME: {os.environ.get('JAVA_HOME', '未设置')}")
+                print("\n完整错误堆栈:")
+                import traceback
+                traceback.print_exc()
+                raise RuntimeError(f"无法初始化 Spark: {e}") from e
         else:
             self.spark = spark_session
+            print("使用已有的 SparkSession")
         
         # 定义数据Schema
         self.schema = StructType([
@@ -56,30 +107,51 @@ class DataLoader:
         Returns:
             DataFrame: Spark DataFrame
         """
-        file_path = str(file_path)
+        # 转换为绝对路径并规范化（Windows 兼容）
+        from pathlib import Path
+        file_path = Path(file_path).resolve()
         
-        if infer_schema:
-            df = self.spark.read \
-                .option("header", header) \
-                .option("inferSchema", "true") \
-                .option("encoding", "utf-8") \
-                .csv(file_path)
+        # Spark 在 Windows 上需要使用正斜杠路径
+        # 不要使用 file:// URI，直接使用路径字符串（用正斜杠）
+        if platform.system() == 'Windows':
+            # 将反斜杠替换为正斜杠
+            file_path_str = str(file_path).replace('\\', '/')
         else:
-            if schema is None:
-                schema = self.schema
+            file_path_str = str(file_path)
+        
+        print(f"  读取路径: {file_path_str}")
+        
+        try:
+            print(f"  开始读取 CSV...")
+            if infer_schema:
+                df = self.spark.read \
+                    .option("header", header) \
+                    .option("inferSchema", "true") \
+                    .option("encoding", "utf-8") \
+                    .csv(file_path_str)
+            else:
+                if schema is None:
+                    schema = self.schema
+                
+                df = self.spark.read \
+                    .option("header", header) \
+                    .schema(schema) \
+                    .option("encoding", "utf-8") \
+                    .csv(file_path_str)
             
-            df = self.spark.read \
-                .option("header", header) \
-                .schema(schema) \
-                .option("encoding", "utf-8") \
-                .csv(file_path)
-        
-        # 确保timestamp列是TimestampType
-        if "timestamp" in df.columns:
-            from pyspark.sql.functions import col
-            df = df.withColumn("timestamp", col("timestamp").cast("timestamp"))
-        
-        return df
+            print(f"  CSV 读取完成")
+            
+            # 确保timestamp列是TimestampType
+            if "timestamp" in df.columns:
+                from pyspark.sql.functions import col
+                df = df.withColumn("timestamp", col("timestamp").cast("timestamp"))
+            
+            return df
+        except Exception as e:
+            print(f"  ✗ 读取 CSV 文件时出错: {file_path}")
+            print(f"  使用的路径: {file_path_str}")
+            print(f"  错误信息: {e}")
+            raise
     
     def load_from_json(self, file_path, schema=None, multi_line=False):
         """
@@ -93,19 +165,26 @@ class DataLoader:
         Returns:
             DataFrame: Spark DataFrame
         """
-        file_path = str(file_path)
+        from pathlib import Path
+        file_path = Path(file_path).resolve()
+        
+        # Windows 路径转换
+        if platform.system() == 'Windows':
+            file_path_str = str(file_path).replace('\\', '/')
+        else:
+            file_path_str = str(file_path)
         
         if schema is None:
             df = self.spark.read \
                 .option("multiLine", multi_line) \
                 .option("encoding", "utf-8") \
-                .json(file_path)
+                .json(file_path_str)
         else:
             df = self.spark.read \
                 .option("multiLine", multi_line) \
                 .schema(schema) \
                 .option("encoding", "utf-8") \
-                .json(file_path)
+                .json(file_path_str)
         
         # 确保timestamp列是TimestampType
         if "timestamp" in df.columns:
@@ -124,8 +203,16 @@ class DataLoader:
         Returns:
             DataFrame: Spark DataFrame
         """
-        file_path = str(file_path)
-        return self.spark.read.parquet(file_path)
+        from pathlib import Path
+        file_path = Path(file_path).resolve()
+        
+        # Windows 路径转换
+        if platform.system() == 'Windows':
+            file_path_str = str(file_path).replace('\\', '/')
+        else:
+            file_path_str = str(file_path)
+        
+        return self.spark.read.parquet(file_path_str)
     
     def load_from_directory(self, directory_path, file_format='csv', **kwargs):
         """
@@ -165,6 +252,9 @@ class DataLoader:
             paths = get_data_paths()
             raw_path = paths['raw_path']
             
+            print(f"查找数据路径: {raw_path}")
+            print(f"路径存在: {raw_path.exists()}")
+            
             # 查找指定格式的文件
             if file_format.lower() == 'csv':
                 pattern = "*.csv"
@@ -177,23 +267,35 @@ class DataLoader:
             
             files = list(raw_path.glob(pattern))
             
+            print(f"找到 {len(files)} 个 {file_format} 文件")
+            for f in files:
+                print(f"  - {f.name}")
+            
             if not files:
                 raise FileNotFoundError(f"在 {raw_path} 中未找到 {file_format} 文件")
             
             # 加载所有文件
             dfs = []
-            for file in files:
-                if file_format.lower() == 'csv':
-                    df = self.load_from_csv(file)
-                elif file_format.lower() == 'json':
-                    df = self.load_from_json(file)
-                elif file_format.lower() == 'parquet':
-                    df = self.load_from_parquet(file)
-                dfs.append(df)
+            for i, file in enumerate(files, 1):
+                print(f"正在加载文件 {i}/{len(files)}: {file.name}")
+                try:
+                    if file_format.lower() == 'csv':
+                        df = self.load_from_csv(file)
+                    elif file_format.lower() == 'json':
+                        df = self.load_from_json(file)
+                    elif file_format.lower() == 'parquet':
+                        df = self.load_from_parquet(file)
+                    dfs.append(df)
+                    print(f"  ✓ 文件加载成功")
+                except Exception as e:
+                    print(f"  ✗ 文件加载失败: {e}")
+                    raise
             
+            print(f"正在合并 {len(dfs)} 个 DataFrame...")
             # 合并所有DataFrame
             from functools import reduce
             result_df = reduce(DataFrame.unionByName, dfs)
+            print("✓ DataFrame 合并完成")
             return result_df
         else:
             return self.load_from_directory(file_path, file_format)

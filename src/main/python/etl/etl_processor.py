@@ -54,7 +54,9 @@ class ETLProcessor:
         
         if stopwords_path:
             # 相对路径转绝对路径
-            project_root = Path(__file__).parent.parent.parent.parent
+            # 当前文件: poa/src/main/python/etl/etl_processor.py
+            # 需要到达: poa/
+            project_root = Path(__file__).parent.parent.parent.parent.parent
             stopwords_path = project_root / stopwords_path
         
         self.tokenizer = Tokenizer(self.spark, stopwords_path)

@@ -19,6 +19,7 @@ def load_config(config_path=None):
     """
     if config_path is None:
         # 获取项目根目录
+        # 从 src/main/python/utils 往上5层: utils -> python -> main -> src -> poa
         current_dir = Path(__file__).parent
         project_root = current_dir.parent.parent.parent.parent
         config_path = project_root / "src/main/resources/config/config.yaml"
@@ -48,7 +49,9 @@ def get_data_paths(config=None):
         config = load_config()
     
     data_config = config.get('data', {})
-    project_root = Path(__file__).parent.parent.parent.parent
+    # 修复：从 src/main/python/utils 往上5层才能到项目根目录
+    # utils -> python -> main -> src -> poa (项目根目录)
+    project_root = Path(__file__).parent.parent.parent.parent.parent
     
     return {
         'raw_path': project_root / data_config.get('raw_path', 'data/raw'),

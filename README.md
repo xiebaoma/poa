@@ -1,5 +1,58 @@
 # 舆情分析系统 (Public Opinion Analysis System)
 
+## 🔴 首次运行必读！
+
+### ⚠️ 必须安装 Java！
+
+**如果你看到 "系统找不到指定的路径" 错误，说明你没有安装 Java！**
+
+PySpark 需要 Java 才能运行。请先安装：
+
+1. **下载 Java 17**：https://adoptium.net/ （选择 Windows .msi 安装包）
+2. **安装时勾选**："Add to PATH" 和 "Set JAVA_HOME"
+3. **验证安装**：重新打开终端，运行 `java -version`
+
+**详细说明**：[JAVA_REQUIRED.md](JAVA_REQUIRED.md)
+
+---
+
+## ⚠️ Windows + Python 3.13 用户重要提示
+
+如果你在 **Windows + Python 3.13** 环境下遇到 PySpark 兼容性问题：
+
+### 问题 1: distutils 模块不存在（Python 3.13）
+**错误信息**: `ModuleNotFoundError: No module named 'distutils'`
+
+**快速解决**:
+```cmd
+# 自动修复（推荐）
+python fix_python313.py
+
+# 或手动安装依赖
+pip install setuptools packaging
+pip install -r requirements.txt
+```
+
+**详细说明**: [PYTHON313_FIX.md](PYTHON313_FIX.md)
+
+### 问题 2: UnixStreamServer 不存在（Windows + PySpark 4.x）
+**快速解决**：
+```cmd
+# 运行自动安装脚本
+install_windows.bat
+
+# 或手动安装兼容版本
+pip install "pyspark>=3.5.0,<4.0.0"
+```
+
+**详细说明**：[PYSPARK_WINDOWS_FIX.md](PYSPARK_WINDOWS_FIX.md) 或 [PYSPARK_FIX_SUMMARY.md](PYSPARK_FIX_SUMMARY.md)
+
+### 推荐配置 ✓
+- **Python**: 3.11 或 3.12（避免 3.13）
+- **PySpark**: 3.5.x（已在 requirements.txt 中配置）
+
+---
+
 ## 🚀 快速开始
 
 ### 方式1: Web可视化界面 (推荐)

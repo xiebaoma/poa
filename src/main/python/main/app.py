@@ -6,10 +6,38 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 import sys
+import platform
+import os
 
 # 添加项目路径
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root / "src/main/python"))
+
+# Windows 兼容性补丁：在导入 PySpark 之前应用
+if platform.system() == 'Windows':
+    try:
+        # 尝试导入并应用兼容性补丁
+        pyspark_compat_path = project_root / "pyspark_windows_compat.py"
+        if pyspark_compat_path.exists():
+            sys.path.insert(0, str(project_root))
+            from pyspark_windows_compat import apply_all_patches
+            apply_all_patches()
+        
+        # 修复 Spark Windows 路径问题
+        spark_fix_path = project_root / "fix_spark_windows.py"
+        if spark_fix_path.exists():
+            from fix_spark_windows import fix_spark_windows_paths
+            fix_spark_windows_paths()
+    except Exception as e:
+        print(f"警告: 无法应用 PySpark Windows 兼容性补丁: {e}", file=sys.stderr)
+
+# Python 3.13 兼容性补丁：修复 distutils 依赖
+if sys.version_info >= (3, 12):
+    try:
+        from pyspark_windows_compat import apply_python313_patch
+        apply_python313_patch()
+    except Exception as e:
+        print(f"警告: 无法应用 Python 3.13 兼容性补丁: {e}", file=sys.stderr)
 
 from pyspark.sql import SparkSession
 
@@ -49,19 +77,157 @@ class SentimentAnalysisApp:
     def _init_spark(self):
         """初始化SparkSession"""
         if self.spark is None:
+            print("初始化 Spark...")
             spark_config = self.config.get('spark', {})
-            self.spark = SparkSession.builder \
-                .appName(spark_config.get('app_name', 'SentimentAnalysisSystem')) \
-                .master(spark_config.get('master', 'local[*]')) \
-                .config("spark.executor.memory", spark_config.get('executor_memory', '2g')) \
-                .config("spark.driver.memory", spark_config.get('driver_memory', '1g')) \
-                .getOrCreate()
+            
+            try:
+                builder = SparkSession.builder \
+                    .appName(spark_config.get('app_name', 'SentimentAnalysisSystem')) \
+                    .master(spark_config.get('master', 'local[*]'))
+                
+                # 基本配置 - 使用较小的内存避免问题
+                builder = builder \
+                    .config("spark.executor.memory", "1g") \
+                    .config("spark.driver.memory", "1g") \
+                    .config("spark.sql.shuffle.partitions", "2") \
+                    .config("spark.default.parallelism", "2") \
+                    .config("spark.python.worker.reuse", "false") \
+                    .config("spark.python.worker.memory", "512m")
+                
+                # Windows 特定配置 - 完全禁用 Hadoop
+                if platform.system() == 'Windows':
+                    print("应用 Windows 配置...")
+                    project_root = Path(__file__).parent.parent.parent.parent.resolve()
+                    
+                    # 使用用户目录下的临时目录
+                    temp_dir = Path.home() / "spark-temp"
+                    temp_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # 设置 Hadoop 目录并下载 winutils（使用项目根目录，不是src目录）
+                    hadoop_home = project_root / ".hadoop"
+                    hadoop_home.mkdir(parents=True, exist_ok=True)
+                    hadoop_bin = hadoop_home / "bin"
+                    hadoop_bin.mkdir(parents=True, exist_ok=True)
+                    
+                    # 尝试下载 winutils.exe
+                    print("  检查 winutils.exe...")
+                    try:
+                        from fix_spark_windows import download_winutils
+                        download_winutils(hadoop_home)
+                    except Exception as e:
+                        print(f"  ⚠️  下载 winutils 时出错: {e}")
+                    
+                    # 设置环境变量（必须在 Spark 启动前设置）
+                    # 使用 Windows 格式的绝对路径，并添加 bin 目录到 PATH
+                    hadoop_home_str = str(hadoop_home.resolve()).replace('/', '\\')
+                    hadoop_bin_str = str(hadoop_bin.resolve()).replace('/', '\\')
+                    
+                    os.environ['HADOOP_USER_NAME'] = 'spark'
+                    os.environ['HADOOP_HOME'] = hadoop_home_str
+                    
+                    # 关键：将 hadoop bin 目录添加到 PATH，让 JVM 能找到 hadoop.dll
+                    current_path = os.environ.get('PATH', '')
+                    if hadoop_bin_str not in current_path:
+                        os.environ['PATH'] = f"{hadoop_bin_str};{current_path}"
+                    
+                    print(f"  ✓ HADOOP_HOME: {hadoop_home_str}")
+                    print(f"  ✓ 已添加 bin 到 PATH: {hadoop_bin_str}")
+                    
+                    # Java 17+ 兼容性参数
+                    java_opts = [
+                        f"-Djava.io.tmpdir={temp_dir}",
+                        f"-Dhadoop.home.dir={hadoop_home_str}",
+                        "-DHADOOP_USER_NAME=spark",
+                        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+                        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+                        "--add-opens=java.base/java.io=ALL-UNNAMED",
+                        "--add-opens=java.base/java.net=ALL-UNNAMED",
+                        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                        "--add-opens=java.base/java.util=ALL-UNNAMED",
+                        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+                        "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+                        "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED",
+                        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+                        "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+                        "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+                        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+                        "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED",
+                        "-XX:+IgnoreUnrecognizedVMOptions"
+                    ]
+                    java_opts_str = " ".join(java_opts)
+                    
+                    # Spark 配置
+                    builder = builder \
+                        .config("spark.hadoop.hadoop.security.authentication", "simple") \
+                        .config("spark.hadoop.hadoop.security.authorization", "false") \
+                        .config("spark.authenticate", "false") \
+                        .config("spark.sql.warehouse.dir", str((project_root / "spark-warehouse").resolve())) \
+                        .config("spark.sql.catalogImplementation", "in-memory") \
+                        .config("spark.driver.host", "localhost") \
+                        .config("spark.local.dir", str((project_root / ".spark-local").resolve())) \
+                        .config("spark.driver.extraJavaOptions", java_opts_str) \
+                        .config("spark.executor.extraJavaOptions", java_opts_str) \
+                        .config("spark.sql.session.timeZone", "UTC") \
+                        .config("spark.ui.enabled", "false")
+                    
+                    # 禁用一些可能导致路径问题的功能
+                    builder = builder \
+                        .config("spark.sql.hive.metastore.sharedPrefixes", "") \
+                        .config("spark.sql.hive.metastore.barrierPrefixes", "") \
+                        .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
+                    
+                    print("✓ Windows 配置已应用")
+                    print(f"✓ 临时目录: {temp_dir}")
+                    print(f"✓ Hadoop 用户: spark")
+                
+                print("正在启动 Spark...")
+                self.spark = builder.getOrCreate()
+                
+                # 设置日志级别为 WARN 减少输出
+                self.spark.sparkContext.setLogLevel("WARN")
+                
+                print("✓ Spark 启动成功")
+                
+            except Exception as e:
+                print(f"\n✗ Spark 启动失败!")
+                print(f"错误: {e}")
+                print("\n尝试诊断...")
+                
+                # 检查 Java
+                import subprocess
+                try:
+                    result = subprocess.run(['java', '-version'], 
+                                          capture_output=True, 
+                                          text=True, 
+                                          timeout=5)
+                    print(f"✓ Java 可用")
+                    # 打印 Java 版本信息
+                    version_output = result.stderr if result.stderr else result.stdout
+                    print(f"  版本: {version_output.split()[2] if version_output.split() else 'unknown'}")
+                except Exception as java_err:
+                    print(f"✗ Java 不可用或不在 PATH 中: {java_err}")
+                
+                # 检查环境变量
+                print(f"\n环境变量:")
+                print(f"  JAVA_HOME: {os.environ.get('JAVA_HOME', '未设置')}")
+                print(f"  HADOOP_HOME: {os.environ.get('HADOOP_HOME', '未设置')}")
+                print(f"  SPARK_LOCAL_DIRS: {os.environ.get('SPARK_LOCAL_DIRS', '未设置')}")
+                
+                print("\n完整错误:")
+                import traceback
+                traceback.print_exc()
+                
+                raise RuntimeError(f"无法启动 Spark: {e}") from e
+                
         return self.spark
     
     @property
     def loader(self):
         if self._loader is None:
+            print("创建 DataLoader...")
             self._loader = DataLoader(self._init_spark())
+            print("DataLoader 创建完成")
         return self._loader
     
     @property
@@ -128,13 +294,20 @@ class SentimentAnalysisApp:
         print("【步骤1】加载数据")
         print("=" * 60)
         
-        if file_path:
-            df = self.loader.load_from_directory(file_path, file_format)
-        else:
-            df = self.loader.load_raw_data(file_format=file_format)
-        
-        print(f"已加载 {df.count()} 条数据")
-        return df
+        try:
+            if file_path:
+                df = self.loader.load_from_directory(file_path, file_format)
+            else:
+                df = self.loader.load_raw_data(file_format=file_format)
+            
+            count = df.count()
+            print(f"已加载 {count} 条数据")
+            return df
+        except Exception as e:
+            print(f"加载数据时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def preprocess(self, df):
         """

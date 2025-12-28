@@ -1,6 +1,13 @@
 # 舆情分析系统依赖包
 # Spark相关
-pyspark>=3.5.0
+# 注意: PySpark 4.1.0 在 Python 3.13 + Windows 上存在兼容性问题
+# 使用 3.5.x 版本以确保 Windows 兼容性
+pyspark>=3.5.0,<4.0.0
+
+# Python 3.13 兼容性依赖
+# Python 3.13 移除了 distutils，PySpark 需要这些包作为替代
+setuptools>=65.0.0
+packaging>=21.0
 
 # 数据处理
 pandas>=2.0.0

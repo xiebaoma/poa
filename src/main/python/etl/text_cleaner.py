@@ -26,7 +26,7 @@ class TextCleaner:
         self.hashtag_pattern = r'#[^#]+#'
         
         # 特殊字符（保留中文、英文、数字和基本标点）
-        self.special_char_pattern = r'[^\u4e00-\u9fa5a-zA-Z0-9，。！？、；：""''（）\s]+'
+        self.special_char_pattern = r'[^\u4e00-\u9fa5a-zA-Z0-9，。！？、；：""''（）\s]+' 
         
         # 多余空格
         self.multi_space_pattern = r'\s+'
