@@ -84,7 +84,7 @@ def load_custom_data(file_path):
     
     # 尝试不同编码
     encodings = ['utf-8', 'gbk', 'gb2312', 'utf-8-sig']
-    df = None
+    df = None 
     
     for encoding in encodings:
         try:
