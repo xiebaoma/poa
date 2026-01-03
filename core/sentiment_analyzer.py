@@ -286,6 +286,60 @@ class SentimentAnalyzer:
             },
             'avg_score': round(sum(scores) / len(scores), 2)
         }
+    
+    def analyze_word_sentiment_by_date(self, df: pd.DataFrame, word: str,
+                                        content_col: str = 'content',
+                                        date_col: str = 'date',
+                                        max_samples_per_day: int = 20) -> Dict[str, float]:
+        """
+        分析特定热词在每天的情感评分
+        
+        Args:
+            df: DataFrame
+            word: 目标热词
+            content_col: 文本列名
+            date_col: 日期列名
+            max_samples_per_day: 每天最大采样数（加速用）
+        
+        Returns:
+            {date_str: avg_score, ...}  日期到平均情感评分的字典
+        """
+        # 筛选包含该词的文本
+        mask = df[content_col].fillna('').str.contains(word, na=False)
+        filtered_df = df[mask].copy()
+        
+        if len(filtered_df) == 0:
+            return {}
+        
+        # 转换日期列
+        filtered_df['_date'] = pd.to_datetime(filtered_df[date_col], errors='coerce')
+        filtered_df = filtered_df.dropna(subset=['_date'])
+        
+        if len(filtered_df) == 0:
+            return {}
+        
+        # 提取日期（去掉时间部分）
+        filtered_df['_date_str'] = filtered_df['_date'].dt.strftime('%Y-%m-%d')
+        
+        # 按日期分组
+        date_scores = {}
+        
+        for date_str, group_df in filtered_df.groupby('_date_str'):
+            # 采样（加速）
+            if len(group_df) > max_samples_per_day:
+                sample_df = group_df.sample(n=max_samples_per_day, random_state=42)
+            else:
+                sample_df = group_df
+            
+            # 分析情感
+            results = self.analyze_batch(sample_df[content_col].tolist())
+            scores = [r['score'] for r in results]
+            
+            if scores:
+                avg_score = sum(scores) / len(scores)
+                date_scores[date_str] = round(avg_score, 2)
+        
+        return date_scores
 
 
 # 全局分析器实例

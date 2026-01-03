@@ -34,7 +34,7 @@ from core import get_analyzer, get_sentiment_analyzer, get_processor
 from utils import load_covid_weibo_data, get_date_range, filter_by_date
 from gui.components import (
     generate_wordcloud, create_bar_chart, create_sentiment_pie_chart,
-    create_sentiment_bar_chart, HotWordTable
+    create_sentiment_bar_chart, HotWordTable, create_sentiment_trend_chart
 )
 
 try:
@@ -221,6 +221,14 @@ class MainWindow:
         
         self.hotword_table = HotWordTable(hw_frame)
         self.hotword_table.pack(fill='both', expand=True)
+        
+        # 设置热词点击回调
+        self.hotword_table.set_word_click_callback(self._on_word_clicked)
+        
+        # 添加提示标签
+        tip_label = ttk.Label(hw_frame, text="💡 双击热词查看情感趋势", 
+                              font=('Microsoft YaHei', 9), foreground='gray')
+        tip_label.pack(pady=(5, 0))
     
     def _create_sentiment_panel(self, parent):
         """创建情感分析面板"""
@@ -564,6 +572,167 @@ class MainWindow:
             pass
         
         self.root.destroy()
+    
+    def _on_word_clicked(self, word: str):
+        """处理热词点击事件"""
+        if self.df is None:
+            messagebox.showwarning("提示", "请先加载数据并分析")
+            return
+        
+        # 显示加载提示
+        self._set_status(f"正在分析 '{word}' 的情感趋势...")
+        self.root.update()
+        
+        # 在线程中执行分析
+        thread = threading.Thread(target=self._show_word_trend, args=(word,))
+        thread.start()
+    
+    def _show_word_trend(self, word: str):
+        """显示热词情感趋势（在线程中运行）"""
+        try:
+            # 筛选日期范围
+            start_date = self.start_date_var.get()
+            end_date = self.end_date_var.get()
+            df = filter_by_date(self.df, start_date, end_date)
+            
+            # 分析每天的情感评分
+            date_scores = self.sentiment_analyzer.analyze_word_sentiment_by_date(df, word)
+            
+            if not date_scores:
+                self.root.after(0, lambda: messagebox.showinfo("提示", 
+                    f"热词 '{word}' 在所选日期范围内没有足够的数据"))
+                self.root.after(0, lambda: self._set_status("就绪"))
+                return
+            
+            # 排序日期
+            sorted_dates = sorted(date_scores.keys())
+            scores = [date_scores[d] for d in sorted_dates]
+            
+            # 在主线程中显示窗口
+            self.root.after(0, lambda: self._display_trend_window(word, sorted_dates, scores))
+            self.root.after(0, lambda: self._set_status("就绪"))
+            
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("错误", f"分析失败:\n{e}"))
+            self.root.after(0, lambda: self._set_status("就绪"))
+            import traceback
+            traceback.print_exc()
+    
+    def _display_trend_window(self, word: str, dates: List[str], scores: List[float]):
+        """显示趋势窗口"""
+        # 创建新窗口
+        if TTKBOOTSTRAP_AVAILABLE:
+            trend_window = ttkb.Toplevel(self.root)
+        else:
+            trend_window = tk.Toplevel(self.root)
+        
+        trend_window.title(f"热词情感趋势 - {word}")
+        trend_window.geometry("900x650")
+        
+        # 主框架
+        main_frame = ttk.Frame(trend_window, padding=15)
+        main_frame.pack(fill='both', expand=True)
+        
+        # 标题
+        title_label = ttk.Label(main_frame, 
+                                text=f'"{word}" 情感评分时间趋势',
+                                font=('Microsoft YaHei', 14, 'bold'))
+        title_label.pack(pady=(0, 15))
+        
+        # 统计信息框架
+        info_frame = ttk.Frame(main_frame)
+        info_frame.pack(fill='x', pady=(0, 15))
+        
+        # 计算统计数据
+        avg_score = sum(scores) / len(scores)
+        max_score = max(scores)
+        min_score = min(scores)
+        max_date = dates[scores.index(max_score)]
+        min_date = dates[scores.index(min_score)]
+        
+        # 显示统计信息
+        stats_text = f"📊 数据点数: {len(dates)}  |  " \
+                     f"📈 平均评分: {avg_score:.2f}  |  " \
+                     f"🔝 最高: {max_score:.2f} ({max_date})  |  " \
+                     f"🔻 最低: {min_score:.2f} ({min_date})"
+        
+        stats_label = ttk.Label(info_frame, text=stats_text, 
+                               font=('Microsoft YaHei', 10))
+        stats_label.pack()
+        
+        # 图表框架
+        chart_frame = ttk.Frame(main_frame)
+        chart_frame.pack(fill='both', expand=True)
+        
+        # 创建趋势图
+        chart = create_sentiment_trend_chart(chart_frame, word, dates, scores)
+        
+        if chart:
+            widget = chart.get_tk_widget()
+            widget.pack(fill='both', expand=True)
+        else:
+            error_label = ttk.Label(chart_frame, 
+                                   text="无法生成图表",
+                                   font=('Microsoft YaHei', 12))
+            error_label.pack(expand=True)
+        
+        # 按钮框架
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill='x', pady=(15, 0))
+        
+        # 导出按钮
+        if TTKBOOTSTRAP_AVAILABLE:
+            export_btn = ttk.Button(button_frame, text="💾 导出数据", 
+                                   command=lambda: self._export_trend_data(word, dates, scores),
+                                   bootstyle="secondary")
+        else:
+            export_btn = ttk.Button(button_frame, text="导出数据", 
+                                   command=lambda: self._export_trend_data(word, dates, scores))
+        export_btn.pack(side='left', padx=5)
+        
+        # 关闭按钮
+        if TTKBOOTSTRAP_AVAILABLE:
+            close_btn = ttk.Button(button_frame, text="关闭", 
+                                  command=trend_window.destroy,
+                                  bootstyle="secondary")
+        else:
+            close_btn = ttk.Button(button_frame, text="关闭", 
+                                  command=trend_window.destroy)
+        close_btn.pack(side='right', padx=5)
+        
+        # 居中显示窗口
+        trend_window.update_idletasks()
+        x = (trend_window.winfo_screenwidth() // 2) - (trend_window.winfo_width() // 2)
+        y = (trend_window.winfo_screenheight() // 2) - (trend_window.winfo_height() // 2)
+        trend_window.geometry(f"+{x}+{y}")
+    
+    def _export_trend_data(self, word: str, dates: List[str], scores: List[float]):
+        """导出趋势数据"""
+        file_path = filedialog.asksaveasfilename(
+            title="导出趋势数据",
+            defaultextension=".csv",
+            initialfile=f"{word}_sentiment_trend.csv",
+            filetypes=[
+                ("CSV 文件", "*.csv"),
+                ("所有文件", "*.*")
+            ]
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            # 创建导出数据
+            export_df = pd.DataFrame({
+                '日期': dates,
+                '情感评分': scores
+            })
+            
+            export_df.to_csv(file_path, index=False, encoding='utf-8-sig')
+            messagebox.showinfo("成功", f"趋势数据已导出到:\n{file_path}")
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"导出失败:\n{e}")
     
     def run(self):
         """运行主窗口"""

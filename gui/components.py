@@ -389,6 +389,70 @@ class ScrollableFrame(ttk.Frame):
         scrollbar.pack(side="right", fill="y")
 
 
+def create_sentiment_trend_chart(parent, word: str, dates: List[str], scores: List[float],
+                                  width: int = 10, height: int = 6) -> Optional[FigureCanvasTkAgg]:
+    """
+    创建热词情感评分趋势图
+    
+    Args:
+        parent: 父组件
+        word: 热词
+        dates: 日期列表
+        scores: 情感评分列表
+        width: 图表宽度（英寸）
+        height: 图表高度（英寸）
+    
+    Returns:
+        FigureCanvasTkAgg 对象
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        return None
+    
+    if not dates or not scores:
+        return None
+    
+    fig = Figure(figsize=(width, height), dpi=100)
+    ax = fig.add_subplot(111)
+    
+    # 绘制折线图
+    ax.plot(dates, scores, marker='o', linewidth=2, markersize=8, 
+            color='#2196F3', markerfacecolor='#FFC107', markeredgecolor='#2196F3')
+    
+    # 填充区域
+    ax.fill_between(range(len(dates)), scores, 5.5, 
+                     where=[s >= 5.5 for s in scores], 
+                     interpolate=True, alpha=0.3, color='green', label='正面')
+    ax.fill_between(range(len(dates)), scores, 5.5, 
+                     where=[s < 5.5 for s in scores], 
+                     interpolate=True, alpha=0.3, color='red', label='负面')
+    
+    # 添加中性线
+    ax.axhline(y=5.5, color='gray', linestyle='--', alpha=0.5, label='中性线')
+    
+    ax.set_xlabel('日期', fontsize=11)
+    ax.set_ylabel('情感评分 (1-10)', fontsize=11)
+    ax.set_title(f'"{word}" 情感评分趋势', fontsize=13, fontweight='bold')
+    ax.set_ylim(1, 10)
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+    
+    # 旋转日期标签
+    ax.set_xticks(range(len(dates)))
+    ax.set_xticklabels(dates, rotation=45, ha='right', fontsize=9)
+    
+    # 添加数值标签（每隔几个显示）
+    step = max(1, len(dates) // 10)
+    for i in range(0, len(dates), step):
+        ax.text(i, scores[i] + 0.2, f'{scores[i]:.1f}', 
+                ha='center', va='bottom', fontsize=8)
+    
+    fig.tight_layout()
+    
+    canvas = FigureCanvasTkAgg(fig, parent)
+    canvas.draw()
+    return canvas
+
+
 class HotWordTable(ttk.Frame):
     """热词表格组件"""
     
@@ -418,9 +482,43 @@ class HotWordTable(ttk.Frame):
         
         self.tree.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
+        
+        # 保存数据的引用
+        self.word_sentiments = []
+        self.on_word_click_callback = None
+        
+        # 绑定双击事件
+        self.tree.bind('<Double-Button-1>', self._on_double_click)
+    
+    def _on_double_click(self, event):
+        """处理双击事件"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+        
+        # 获取选中的行
+        item = self.tree.item(selection[0])
+        values = item['values']
+        
+        if not values:
+            return
+        
+        # 获取热词
+        word = values[1]  # 第二列是热词
+        
+        # 调用回调函数
+        if self.on_word_click_callback:
+            self.on_word_click_callback(word)
+    
+    def set_word_click_callback(self, callback):
+        """设置热词点击回调函数"""
+        self.on_word_click_callback = callback
     
     def update_data(self, word_sentiments: List[Dict]):
         """更新表格数据"""
+        # 保存数据
+        self.word_sentiments = word_sentiments
+        
         # 清空现有数据
         for item in self.tree.get_children():
             self.tree.delete(item)
